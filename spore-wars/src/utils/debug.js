@@ -1,6 +1,6 @@
 // Debug overlay — toggled with backtick key, displays game state info
 import { state } from '../state.js';
-import { CITY_HP } from '../constants.js';
+import { CITY_HP, GEYSER_HP, UNIT_HP } from '../constants.js';
 
 const DEBUG_FONT_SIZE = 14;
 const DEBUG_PADDING = 10;
@@ -57,7 +57,7 @@ export function updateDebugOverlay() {
   // Civ info
   for (const civ of state.civs) {
     const label = civ === state.player ? 'PLAYER' : `AI ${civ.id}`;
-    lines.push(`[Civ ${civ.id}] ${label} | Sporebucks: ${civ.sporebucks} | Units: ${civ.units.length}`);
+    lines.push(`[Civ ${civ.id}] ${label} | Sporebucks: ${Math.floor(civ.sporebucks)} | Units: ${civ.units.length}`);
   }
   lines.push('');
 
@@ -67,6 +67,26 @@ export function updateDebugOverlay() {
     const regenStatus = city.regenActive ? 'REGEN' : 'NO_REGEN';
     lines.push(
       `[City ${city.id}] Owner: Civ ${city.owner.id} | HP: ${city.currentHP}/${CITY_HP} | Conquest: ${conquestPct}% | ${regenStatus}`
+    );
+  }
+
+  lines.push('');
+
+  // Unit info
+  for (const civ of state.civs) {
+    for (const unit of civ.units) {
+      lines.push(
+        `[Unit ${unit.id}] Owner: Civ ${unit.owner.id} | HP: ${unit.currentHP}/${UNIT_HP} | ${unit.unitState} | Pos: (${Math.round(unit.x)}, ${Math.round(unit.y)})`
+      );
+    }
+  }
+  lines.push('');
+
+  // Geyser info
+  for (const geyser of state.geysers) {
+    const ownerLabel = geyser.owner ? `Civ ${geyser.owner.id}` : 'none';
+    lines.push(
+      `[Geyser ${geyser.id}] Owner: ${ownerLabel} | HP: ${geyser.currentHP}/${GEYSER_HP} | ${geyser.claimState}`
     );
   }
 

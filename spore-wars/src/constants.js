@@ -55,6 +55,9 @@ export const DEPTH_UI = 10;
 
 // Unit rendering
 export const UNIT_SPRITE_RADIUS = 12;
+export const UNIT_BAR_WIDTH = 24;
+export const UNIT_BAR_HEIGHT = 3;
+export const UNIT_BAR_OFFSET_Y = -18;
 
 // Economy
 export const STARTING_SPOREBUCKS = 2000;

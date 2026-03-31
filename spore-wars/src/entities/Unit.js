@@ -6,6 +6,9 @@ import {
   UNIT_COST,
   UNIT_SPRITE_RADIUS,
   UNIT_DAMAGE_PER_SECOND,
+  UNIT_BAR_WIDTH,
+  UNIT_BAR_HEIGHT,
+  UNIT_BAR_OFFSET_Y,
   ATTACK_RANGE,
   DEPTH_UNIT,
 } from '../constants.js';
@@ -49,10 +52,23 @@ export class Unit {
     this.selectionRing.setFillStyle(0x000000, 0);
     this.selectionRing.setVisible(false);
 
+    // HP bar background
+    this.hpBarBg = this.scene.add.rectangle(
+      0, UNIT_BAR_OFFSET_Y, UNIT_BAR_WIDTH, UNIT_BAR_HEIGHT, 0x333333, 0.8
+    );
+
+    // HP bar fill (green)
+    this.hpBarFill = this.scene.add.rectangle(
+      -UNIT_BAR_WIDTH / 2, UNIT_BAR_OFFSET_Y, UNIT_BAR_WIDTH, UNIT_BAR_HEIGHT, 0x44dd44, 0.9
+    );
+    this.hpBarFill.setOrigin(0, 0.5);
+
     const container = this.scene.add.container(this.x, this.y, [
       this.selectionRing,
       outline,
       body,
+      this.hpBarBg,
+      this.hpBarFill,
     ]);
     container.setDepth(DEPTH_UNIT);
 
@@ -233,6 +249,12 @@ export class Unit {
     }
   }
 
+  // Updates the HP bar fill width to reflect current HP
+  updateBar() {
+    const pct = this.currentHP / UNIT_HP;
+    this.hpBarFill.width = UNIT_BAR_WIDTH * pct;
+  }
+
   // Reduces HP and marks as dead if HP reaches 0
   takeDamage(amount) {
     this.currentHP -= amount;
@@ -240,6 +262,7 @@ export class Unit {
       this.currentHP = 0;
       this.isAlive = false;
     }
+    this.updateBar();
   }
 
   // Shows the selection highlight ring

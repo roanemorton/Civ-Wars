@@ -7,6 +7,7 @@ import {
   ATTACK_RANGE,
   AI_TICK_INTERVAL,
 } from '../constants.js';
+import { initRelationships, updateRelationships, getHostility } from './Relationships.js';
 
 let aiTimer = 0;
 
@@ -15,12 +16,13 @@ export function resetAI() {
   aiTimer = 0;
 }
 
-// Assigns personality types to AI civs
+// Assigns personality types to AI civs and sets up relationships
 export function initAI() {
   state.civs[1].personality = 'rusher';
   state.civs[2].personality = 'balanced';
   state.civs[3].personality = 'balanced';
   state.civs[4].personality = 'economist';
+  initRelationships();
 }
 
 // Runs the AI decision loop on a 1-second tick
@@ -29,6 +31,7 @@ export function updateAI(delta, scene) {
 
   while (aiTimer >= AI_TICK_INTERVAL) {
     aiTimer -= AI_TICK_INTERVAL;
+    updateRelationships();
 
     for (const civ of state.civs) {
       if (civ === state.player) continue;
@@ -42,14 +45,20 @@ export function updateAI(delta, scene) {
 function runCivAI(civ, scene) {
   trySpawnUnit(civ, scene);
 
-  // Step 3: Defend if any city is under attack
+  // Step 1: Defend if any city is under attack
   if (handleDefense(civ)) return;
 
-  // Step 1: Claim unclaimed geysers
+  // Step 2: Claim unclaimed geysers
   if (handleClaimGeysers(civ)) return;
 
-  // Step 2: Attack enemy assets (personality-gated)
-  handleAttack(civ);
+  // Step 3: Guard owned geysers
+  if (handleGuardGeysers(civ)) return;
+
+  // Step 4: Attack enemy assets (only when significantly stronger)
+  if (handleAttack(civ)) return;
+
+  // Step 5: Idle units return to home city
+  handleReturnHome(civ);
 }
 
 // Spawns a unit if the civ can afford it and has room
@@ -103,25 +112,96 @@ function handleClaimGeysers(civ) {
   return true;
 }
 
-// Sends idle units to attack the nearest enemy asset based on personality
-function handleAttack(civ) {
-  const idleUnits = getIdleUnits(civ);
-  if (idleUnits.length === 0) return;
+// Sends idle units to guard the nearest unguarded owned geyser
+function handleGuardGeysers(civ) {
+  if (civ.geysers.length === 0) return false;
 
-  // Personality gate for step 2
-  if (civ.personality === 'economist') return;
-  if (civ.personality === 'balanced' && civ.units.length < 2) return;
-  // Rusher: needs >= 1 unit (always true if we got here)
+  const idleUnits = getIdleUnits(civ);
+  if (idleUnits.length === 0) return false;
+
+  // Find geysers without a nearby friendly unit guarding them
+  const unguarded = civ.geysers.filter((geyser) => {
+    return !civ.units.some((u) => u.isAlive && distBetween(u, geyser) <= ATTACK_RANGE * 2);
+  });
+  if (unguarded.length === 0) return false;
 
   const unit = idleUnits[0];
-  const target = findNearestEnemyAsset(unit, civ);
-  if (!target) return;
+  const geyser = findNearest(unit, unguarded);
+  if (geyser) {
+    unit.moveTo(geyser.x, geyser.y);
+    return true;
+  }
+  return false;
+}
+
+// Returns the number of alive units for a civ
+function getAliveUnitCount(civ) {
+  return civ.units.filter((u) => u.isAlive).length;
+}
+
+// Sends idle units to attack the most hostile civ's nearest asset
+// Guided by relationship scores and personality thresholds
+function handleAttack(civ) {
+  const idleUnits = getIdleUnits(civ);
+  if (idleUnits.length === 0) return false;
+
+  // Personality gate — minimum unit thresholds
+  if (civ.personality === 'economist' && civ.units.length < 3) return false;
+  if (civ.personality === 'balanced' && civ.units.length < 3) return false;
+  if (civ.personality === 'rusher' && civ.units.length < 2) return false;
+
+  // Hostility threshold by personality
+  const threshold = civ.personality === 'rusher' ? 35
+    : civ.personality === 'economist' ? 65 : 50;
+
+  // Find the most hostile living civ that passes all gates
+  let targetCiv = null;
+  let highestHostility = 0;
+  const ourUnits = getAliveUnitCount(civ);
+
+  for (const other of state.civs) {
+    if (other === civ) continue;
+    if (other.cities.length === 0 && other.units.filter((u) => u.isAlive).length === 0) continue;
+
+    const h = getHostility(civ, other);
+    if (h < threshold) continue;
+
+    // Light strength gate — need 1.25x their units
+    const theirUnits = getAliveUnitCount(other);
+    if (ourUnits < theirUnits * 1.25) continue;
+
+    if (h > highestHostility) {
+      highestHostility = h;
+      targetCiv = other;
+    }
+  }
+
+  if (!targetCiv) return false;
+
+  const unit = idleUnits[0];
+  const target = findNearestCivAsset(unit, targetCiv);
+  if (!target) return false;
 
   // Use claimGeyser for geysers, attackEntity for cities
   if (target.currentHP !== undefined && target.claimState !== undefined) {
     unit.claimGeyser(target);
   } else {
     unit.attackEntity(target);
+  }
+  return true;
+}
+
+// Sends idle units back toward their home city when nothing else to do
+function handleReturnHome(civ) {
+  if (civ.cities.length === 0) return;
+
+  const idleUnits = getIdleUnits(civ);
+  const homeCity = civ.cities[0];
+
+  for (const unit of idleUnits) {
+    if (distBetween(unit, homeCity) > ATTACK_RANGE * 3) {
+      unit.moveTo(homeCity.x, homeCity.y);
+    }
   }
 }
 
@@ -184,14 +264,13 @@ function findNearest(unit, list) {
   return nearest;
 }
 
-// Returns the nearest enemy city or geyser not owned by this civ
-function findNearestEnemyAsset(unit, civ) {
+// Returns the nearest city or geyser owned by a specific target civ
+function findNearestCivAsset(unit, targetCiv) {
   let nearest = null;
   let nearestDist = Infinity;
 
-  // Check enemy cities
   for (const city of state.cities) {
-    if (city.owner === civ) continue;
+    if (city.owner !== targetCiv) continue;
     const d = distBetween(unit, city);
     if (d < nearestDist) {
       nearestDist = d;
@@ -199,9 +278,8 @@ function findNearestEnemyAsset(unit, civ) {
     }
   }
 
-  // Check enemy geysers (owned by someone else)
   for (const geyser of state.geysers) {
-    if (geyser.owner === civ || geyser.owner === null) continue;
+    if (geyser.owner !== targetCiv) continue;
     const d = distBetween(unit, geyser);
     if (d < nearestDist) {
       nearestDist = d;

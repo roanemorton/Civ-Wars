@@ -14,7 +14,9 @@ import {
   TERRITORY_GEYSER_RADIUS,
   GEYSER_COLOR,
   FAST_FORWARD_SPEED,
+  CIV_COLORS,
 } from '../constants.js';
+import { getHostility, getRelationshipLabel, getRelationshipColor } from '../ai/Relationships.js';
 
 const SCALE_X = MINIMAP_WIDTH / MAP_WIDTH;
 const SCALE_Y = MINIMAP_HEIGHT / MAP_HEIGHT;
@@ -30,6 +32,7 @@ export class UIScene extends Phaser.Scene {
     this.createSpeedButtons();
     this.createSporebucksCounter();
     this.createPlaceholderTabs();
+    this.createPoliticsTab();
     createDebugOverlay(this);
   }
 
@@ -225,11 +228,93 @@ export class UIScene extends Phaser.Scene {
     }
   }
 
+  // Creates the Politics tab button and expandable panel at bottom-right
+  createPoliticsTab() {
+    const btnW = 100;
+    const btnH = 28;
+    const btnX = 1280 - btnW - 10;
+    const btnY = 720 - btnH - 10;
+
+    this.politicsOpen = false;
+
+    // Tab button
+    this.politicsBtn = this.add.rectangle(
+      btnX + btnW / 2, btnY + btnH / 2, btnW, btnH, 0x333333, 0.7
+    );
+    this.politicsBtn.setStrokeStyle(1, 0x666666);
+    this.politicsBtn.setInteractive();
+
+    this.politicsBtnLabel = this.add.text(btnX + 8, btnY + 6, 'Politics', {
+      fontSize: '12px',
+      fontFamily: 'monospace',
+      color: '#aaaaaa',
+    });
+
+    this.politicsBtn.on('pointerdown', () => {
+      state.uiClicked = true;
+      this.politicsOpen = !this.politicsOpen;
+      this.politicsPanel.setVisible(this.politicsOpen);
+      for (const row of this.politicsRows) {
+        row.dot.setVisible(this.politicsOpen);
+        row.label.setVisible(this.politicsOpen);
+      }
+    });
+
+    // Panel — expands upward from button
+    const rowH = 24;
+    const panelH = rowH * 4 + 12;
+    const panelW = 160;
+    const panelX = btnX + btnW - panelW;
+    const panelY = btnY - panelH - 4;
+
+    this.politicsPanel = this.add.rectangle(
+      panelX + panelW / 2, panelY + panelH / 2, panelW, panelH, 0x222222, 0.9
+    );
+    this.politicsPanel.setStrokeStyle(1, 0x666666);
+    this.politicsPanel.setVisible(false);
+
+    // One row per non-player civ
+    this.politicsRows = [];
+    for (let i = 1; i < 5; i++) {
+      const rowY = panelY + 8 + (i - 1) * rowH;
+
+      const dot = this.add.circle(panelX + 14, rowY + 8, 6, CIV_COLORS[i]);
+      dot.setVisible(false);
+
+      const label = this.add.text(panelX + 28, rowY + 1, '', {
+        fontSize: '12px',
+        fontFamily: 'monospace',
+        color: '#aaaaaa',
+      });
+      label.setVisible(false);
+
+      this.politicsRows.push({ civIndex: i, dot, label });
+    }
+  }
+
+  // Updates the Politics panel text if open
+  updatePoliticsTab() {
+    if (!this.politicsOpen || !state.player) return;
+
+    for (const row of this.politicsRows) {
+      const civ = state.civs[row.civIndex];
+      if (!civ) continue;
+
+      const h = getHostility(civ, state.player);
+      const label = getRelationshipLabel(h);
+      const color = getRelationshipColor(h);
+
+      row.label.setText(label);
+      row.label.setColor(color);
+    }
+  }
+
   // Updates all UI elements each frame
   update() {
     this.updateMinimap();
     this.updateSpeedButtons();
     this.updateSporebucksCounter();
+    this.updatePoliticsTab();
     updateDebugOverlay();
   }
 }

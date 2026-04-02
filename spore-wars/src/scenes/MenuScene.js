@@ -2,6 +2,7 @@
 import Phaser from 'phaser';
 import { state, resetState } from '../state.js';
 import { resetAI } from '../ai/AI.js';
+import { resetRelationships } from '../ai/Relationships.js';
 
 export class MenuScene extends Phaser.Scene {
   constructor() {
@@ -83,6 +84,7 @@ export class MenuScene extends Phaser.Scene {
     this.scene.stop('UIScene');
     resetState();
     resetAI();
+    resetRelationships();
     // start('GameScene') restarts it; stop MenuScene last since we're running in it
     this.scene.start('GameScene');
     this.scene.stop('MenuScene');

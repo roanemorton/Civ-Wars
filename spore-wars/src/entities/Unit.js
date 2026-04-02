@@ -11,7 +11,9 @@ import {
   UNIT_BAR_OFFSET_Y,
   ATTACK_RANGE,
   DEPTH_UNIT,
+  GEYSER_CLAIM_TIME,
 } from '../constants.js';
+import { recordAggression } from '../ai/Relationships.js';
 
 let nextUnitId = 0;
 
@@ -78,6 +80,7 @@ export class Unit {
   // Cancels any current action and cleans up associated state
   cancelCurrentAction() {
     if (this.claimTarget) {
+      this.claimTarget.resetCaptureBar();
       this.claimTarget.resetHP();
       this.claimTarget = null;
     }
@@ -219,6 +222,7 @@ export class Unit {
       this.attackTimer -= 1000;
 
       // Deal damage to target
+      recordAggression(this.owner, this.attackTarget.owner);
       if (this.attackTarget instanceof Unit) {
         this.attackTarget.takeDamage(UNIT_DAMAGE_PER_SECOND);
         // Target deals damage back
@@ -232,19 +236,32 @@ export class Unit {
     }
   }
 
-  // Handles claiming a geyser
+  // Handles claiming a geyser — fast timer for unclaimed, damage-based for claimed
   updateClaiming(delta) {
-    // Accumulate timer and deal damage to geyser per second
-    this.attackTimer += delta;
-    while (this.attackTimer >= 1000) {
-      this.attackTimer -= 1000;
+    if (!this.claimTarget.owner) {
+      // Unclaimed: simple timer with progress bar
+      this.attackTimer += delta;
+      const progress = Math.min(this.attackTimer / (GEYSER_CLAIM_TIME * 1000), 1);
+      this.claimTarget.updateCaptureBar(progress);
 
-      const claimed = this.claimTarget.takeDamage(UNIT_DAMAGE_PER_SECOND);
-      if (claimed) {
+      if (this.attackTimer >= GEYSER_CLAIM_TIME * 1000) {
         this.claimTarget.claim(this.owner);
         this.claimTarget = null;
         this.unitState = 'idle';
-        return;
+      }
+    } else {
+      // Claimed by enemy: deal damage per second
+      this.attackTimer += delta;
+      while (this.attackTimer >= 1000) {
+        this.attackTimer -= 1000;
+
+        const claimed = this.claimTarget.takeDamage(UNIT_DAMAGE_PER_SECOND);
+        if (claimed) {
+          this.claimTarget.claim(this.owner);
+          this.claimTarget = null;
+          this.unitState = 'idle';
+          return;
+        }
       }
     }
   }

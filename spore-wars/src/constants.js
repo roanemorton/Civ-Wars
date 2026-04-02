@@ -20,6 +20,7 @@ export const UNIT_CAP = 5;
 export const ATTACK_RANGE = 1.5 * CITY_SPRITE_RADIUS;
 
 // Geysers
+export const GEYSER_CLAIM_TIME = 5;
 export const GEYSER_HP = 300;
 export const GEYSER_INCOME = 1000;
 export const GEYSER_SPRITE_RADIUS = 20;
@@ -64,6 +65,11 @@ export const STARTING_SPOREBUCKS = 2000;
 
 // AI
 export const AI_TICK_INTERVAL = 1000;
+
+// Relationships
+export const HOSTILITY_AGGRESSION_SPIKE = 15;
+export const HOSTILITY_AGGRESSION_DECAY = 3;
+export const HOSTILITY_AGGRESSION_CAP = 60;
 
 // Minimap
 export const MINIMAP_WIDTH = 200;

@@ -9,6 +9,7 @@ import {
   GEYSER_BAR_OFFSET_Y,
   DEPTH_GEYSER,
 } from '../constants.js';
+import { recordAggression } from '../ai/Relationships.js';
 
 let nextGeyserId = 0;
 
@@ -26,6 +27,14 @@ export class Geyser {
     this.graphics = this.createGraphics();
     this.hpBarBg = this.createHPBarBackground();
     this.hpBarFill = this.createHPBarFill();
+    this.captureBarBg = this.createCaptureBarBackground();
+    this.captureBarFill = this.createCaptureBarFill();
+
+    // Unclaimed geysers have no HP bar; capture bar hidden until claiming starts
+    this.hpBarBg.setVisible(false);
+    this.hpBarFill.setVisible(false);
+    this.captureBarBg.setVisible(false);
+    this.captureBarFill.setVisible(false);
 
     this.register();
   }
@@ -97,6 +106,53 @@ export class Geyser {
     return fill;
   }
 
+  // Creates the dark background bar for the capture progress meter
+  createCaptureBarBackground() {
+    const barX = this.x - GEYSER_BAR_WIDTH / 2;
+    const barY = this.y + GEYSER_BAR_OFFSET_Y;
+    const bg = this.scene.add.rectangle(
+      barX + GEYSER_BAR_WIDTH / 2,
+      barY + GEYSER_BAR_HEIGHT / 2,
+      GEYSER_BAR_WIDTH,
+      GEYSER_BAR_HEIGHT,
+      0x333333,
+      0.8
+    );
+    bg.setDepth(DEPTH_GEYSER);
+    return bg;
+  }
+
+  // Creates the colored fill bar showing capture progress
+  createCaptureBarFill() {
+    const barX = this.x - GEYSER_BAR_WIDTH / 2;
+    const barY = this.y + GEYSER_BAR_OFFSET_Y;
+    const fill = this.scene.add.rectangle(
+      barX,
+      barY + GEYSER_BAR_HEIGHT / 2,
+      0,
+      GEYSER_BAR_HEIGHT,
+      0x44dddd,
+      0.9
+    );
+    fill.setOrigin(0, 0.5);
+    fill.setDepth(DEPTH_GEYSER);
+    return fill;
+  }
+
+  // Shows and updates the capture progress bar (0 to 1)
+  updateCaptureBar(progress) {
+    this.captureBarBg.setVisible(true);
+    this.captureBarFill.setVisible(true);
+    this.captureBarFill.width = GEYSER_BAR_WIDTH * progress;
+  }
+
+  // Hides and resets the capture progress bar
+  resetCaptureBar() {
+    this.captureBarBg.setVisible(false);
+    this.captureBarFill.setVisible(false);
+    this.captureBarFill.width = 0;
+  }
+
   // Updates the HP bar fill width to reflect current HP
   updateBar() {
     const pct = this.currentHP / GEYSER_HP;
@@ -113,6 +169,11 @@ export class Geyser {
 
   // Transfers ownership to the claiming civ
   claim(newOwner) {
+    // Record aggression if stealing from another civ
+    if (this.owner && this.owner !== newOwner) {
+      recordAggression(newOwner, this.owner);
+    }
+
     // Remove from old owner if previously claimed
     if (this.owner) {
       this.owner.geysers = this.owner.geysers.filter((g) => g !== this);
@@ -127,6 +188,29 @@ export class Geyser {
     this.claimState = 'claimed';
     this.updateBar();
     this.redraw();
+
+    // Show HP bar now that geyser is claimed, hide capture bar
+    this.hpBarBg.setVisible(true);
+    this.hpBarFill.setVisible(true);
+    this.resetCaptureBar();
+
+    // Cancel all other units targeting this geyser
+    this.clearClaimingUnits(newOwner);
+  }
+
+  // Cancels all units targeting this geyser except those belonging to excludeCiv
+  clearClaimingUnits(excludeCiv) {
+    for (const civ of state.civs) {
+      if (civ === excludeCiv) continue;
+      for (const unit of civ.units) {
+        if (!unit.isAlive) continue;
+        if (unit.claimTarget === this) {
+          unit.claimTarget = null;
+          unit.attackTimer = 0;
+          unit.unitState = 'idle';
+        }
+      }
+    }
   }
 
   // Resets HP to full when a claiming unit abandons the geyser
@@ -135,10 +219,13 @@ export class Geyser {
     // Only reset to unclaimed if not already owned
     if (!this.owner) {
       this.claimState = 'unclaimed';
+      this.hpBarBg.setVisible(false);
+      this.hpBarFill.setVisible(false);
     } else {
       this.claimState = 'claimed';
     }
     this.updateBar();
+    this.resetCaptureBar();
   }
 
   // Redraws the diamond graphic when ownership changes
@@ -173,6 +260,8 @@ export class Geyser {
     this.graphics.destroy();
     this.hpBarBg.destroy();
     this.hpBarFill.destroy();
+    this.captureBarBg.destroy();
+    this.captureBarFill.destroy();
     this.deregister();
   }
 }

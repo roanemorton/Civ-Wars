@@ -140,10 +140,13 @@ export class City {
     this.updateBar();
     this.redraw();
 
-    // If old owner has no cities left, kill all their units
+    // If old owner has no cities left, kill all their units and unclaim geysers
     if (oldOwner.cities.length === 0) {
       for (const unit of oldOwner.units) {
         unit.isAlive = false;
+      }
+      for (const geyser of [...oldOwner.geysers]) {
+        geyser.unclaim();
       }
     }
   }

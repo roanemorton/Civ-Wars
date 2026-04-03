@@ -23,6 +23,7 @@ export class Geyser {
     this.owner = null;
     this.currentHP = GEYSER_HP;
     this.claimState = 'unclaimed';
+    this.claimedBy = null;
 
     this.graphics = this.createGraphics();
     this.hpBarBg = this.createHPBarBackground();
@@ -169,6 +170,8 @@ export class Geyser {
 
   // Transfers ownership to the claiming civ
   claim(newOwner) {
+    this.claimedBy = null;
+
     // Record aggression if stealing from another civ
     if (this.owner && this.owner !== newOwner) {
       recordAggression(newOwner, this.owner);
@@ -196,6 +199,21 @@ export class Geyser {
 
     // Cancel all other units targeting this geyser
     this.clearClaimingUnits(newOwner);
+  }
+
+  // Reverts this geyser to unclaimed state (used when owning civ is eliminated)
+  unclaim() {
+    if (this.owner) {
+      this.owner.geysers = this.owner.geysers.filter((g) => g !== this);
+    }
+    this.owner = null;
+    this.currentHP = GEYSER_HP;
+    this.claimState = 'unclaimed';
+    this.claimedBy = null;
+    this.hpBarBg.setVisible(false);
+    this.hpBarFill.setVisible(false);
+    this.resetCaptureBar();
+    this.redraw();
   }
 
   // Cancels all units targeting this geyser except those belonging to excludeCiv

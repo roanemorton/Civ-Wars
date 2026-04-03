@@ -3,7 +3,14 @@
 // Map dimensions
 export const MAP_WIDTH = 3200;
 export const MAP_HEIGHT = 2400;
-export const MAP_BG_COLOR = 0xd4e6b5;
+
+// Terrain grid
+export const MAP_SEED = 314;
+export const TILE_SIZE = 64;
+export const GRID_COLS = Math.ceil(MAP_WIDTH / TILE_SIZE);
+export const GRID_ROWS = Math.ceil(MAP_HEIGHT / TILE_SIZE);
+export const WATER_THRESHOLD = 0.35;
+export const HILLS_THRESHOLD = 0.65;
 
 // City
 export const CITY_SPRITE_RADIUS = 40;
@@ -15,7 +22,7 @@ export const CITY_REGEN_COOLDOWN = 100;
 export const UNIT_COST = 1000;
 export const UNIT_HP = 100;
 export const UNIT_DAMAGE_PER_SECOND = 10;
-export const UNIT_SPEED = 120;
+export const UNIT_SPEED = 90;
 export const UNIT_CAP = 5;
 export const ATTACK_RANGE = 1.5 * CITY_SPRITE_RADIUS;
 
@@ -29,18 +36,20 @@ export const GEYSER_BAR_WIDTH = 40;
 export const GEYSER_BAR_HEIGHT = 4;
 export const GEYSER_BAR_OFFSET_Y = -30;
 
-// Geyser positions — 17 fixed positions scattered between cities
-export const GEYSER_POSITIONS = [
-  [1400, 1050], [1800, 1350],
-  [1000, 750], [1200, 600],
-  [2000, 750], [2200, 600],
-  [1000, 1650], [1200, 1800],
-  [2000, 1650], [2200, 1800],
-  [450, 650], [750, 400],
-  [2450, 650], [2750, 400],
-  [450, 1750], [750, 2000],
-  [2450, 1750],
+// Continent layout (tile coords — center and elliptical radius)
+export const CONTINENTS = [
+  { cx: 12, cy: 10, rx: 10, ry: 8 },   // A: left-medium
+  { cx: 38, cy: 10, rx: 10, ry: 8 },   // B: right-medium
+  { cx: 25, cy: 30, rx: 10, ry: 5 },   // C: bottom-small
 ];
+export const CONTINENT_GEYSERS = [5, 5, 3];  // geysers per continent
+export const CIV_CONTINENTS = [0, 0, 1, 1, 2]; // civ-to-continent assignment
+
+// Entity placement
+export const CITY_MIN_DISTANCE = 400;
+export const CITY_WATER_BUFFER = 2;    // min tiles from coast
+export const GEYSER_MIN_CITY_DIST = 200;
+export const GEYSER_MIN_GEYSER_DIST = 150;
 
 // Territory
 export const TERRITORY_CITY_RADIUS = 200;
@@ -71,6 +80,26 @@ export const HOSTILITY_AGGRESSION_SPIKE = 15;
 export const HOSTILITY_AGGRESSION_DECAY = 3;
 export const HOSTILITY_AGGRESSION_CAP = 60;
 
+// Civ types
+export const CIV_TYPES = ['military', 'economic', 'religious'];
+
+// Diplomacy
+export const GIFT_COST = 1000;
+export const GIFT_DIPLOMACY_BONUS = 20;
+export const INSULT_DIPLOMACY_PENALTY = 15;
+export const DECLARE_WAR_AGGRESSION = 50;
+export const DIPLOMACY_COOLDOWN = 10;
+export const DIPLOMACY_DECAY = 1;
+
+// Military assistance
+export const MILITARY_ASSIST_UNITS = 2;
+export const MILITARY_ASSIST_TRAVEL_COST_PER_TILE = 10;
+export const MILITARY_ASSIST_HOSTILITY_SPIKE = 40;
+export const MILITARY_ASSIST_DURATION = 120;
+export const MILITARY_ASSIST_MULTIPLIERS = {
+  allied: 0.5, friendly: 0.75, neutral: 1.25, wary: 2.0,
+};
+
 // Minimap
 export const MINIMAP_WIDTH = 200;
 export const MINIMAP_HEIGHT = 150;
@@ -85,14 +114,8 @@ export const FAST_FORWARD_SPEED = 2;
 // Civ colors (player blue, then red, green, orange, purple)
 export const CIV_COLORS = [0x4488ff, 0xff4444, 0x44cc44, 0xffaa00, 0xcc44cc];
 
-// City positions — player at center, rivals in quadrant corners
-export const CITY_POSITIONS = [
-  [1600, 1200],
-  [600, 500],
-  [2600, 500],
-  [600, 1900],
-  [2600, 1900],
-];
+// Number of cities matches number of civs (derived from CIV_COLORS.length)
+export const NUM_CITIES = CIV_COLORS.length;
 
 // Conquest bar dimensions
 export const CONQUEST_BAR_WIDTH = 60;

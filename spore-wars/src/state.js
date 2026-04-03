@@ -13,6 +13,7 @@ const DEFAULTS = {
   gameSpeed: 1,
   uiClicked: false,
   unitsLost: 0,
+  terrain: null,
 };
 
 export const state = { ...DEFAULTS };
@@ -32,5 +33,6 @@ export function resetState() {
     gameSpeed: 1,
     uiClicked: false,
     unitsLost: 0,
+    terrain: null,
   });
 }

@@ -5,13 +5,22 @@ import { City } from '../entities/City.js';
 import { Geyser } from '../entities/Geyser.js';
 import { Unit } from '../entities/Unit.js';
 import { initAI, updateAI } from '../ai/AI.js';
+import { TerrainGrid, WATER, PLAINS, HILLS } from '../terrain/TerrainGrid.js';
 import {
+  MAP_SEED,
   MAP_WIDTH,
   MAP_HEIGHT,
-  MAP_BG_COLOR,
+  TILE_SIZE,
+  GRID_COLS,
+  GRID_ROWS,
   CIV_COLORS,
-  CITY_POSITIONS,
-  GEYSER_POSITIONS,
+  CONTINENTS,
+  CONTINENT_GEYSERS,
+  CIV_CONTINENTS,
+  CITY_MIN_DISTANCE,
+  CITY_WATER_BUFFER,
+  GEYSER_MIN_CITY_DIST,
+  GEYSER_MIN_GEYSER_DIST,
   STARTING_SPOREBUCKS,
   PAN_THRESHOLD,
   UNIT_COST,
@@ -41,11 +50,11 @@ export class GameScene extends Phaser.Scene {
 
   // Sets up the map, civs, cities, camera, and input
   create() {
-    this.drawMap();
+    this.generateAndDrawTerrain();
     this.initCivs();
     this.createTerritoryLayers();
-    this.spawnGeysers();
     this.spawnCities();
+    this.spawnGeysers();
     this.setupCamera();
     this.setupPanning();
     this.setupClickHandler();
@@ -57,11 +66,65 @@ export class GameScene extends Phaser.Scene {
     this.scene.launch('UIScene');
   }
 
-  // Draws the flat map background
-  drawMap() {
+  // Generates terrain and draws it as colored tiles (once at startup)
+  generateAndDrawTerrain() {
+    const terrain = new TerrainGrid();
+    terrain.generateTerrain(MAP_SEED);
+    state.terrain = terrain;
+
     const bg = this.add.graphics();
-    bg.fillStyle(MAP_BG_COLOR, 1);
-    bg.fillRect(0, 0, MAP_WIDTH, MAP_HEIGHT);
+    bg.setDepth(-1);
+    this.terrainGfx = bg;
+
+    for (let row = 0; row < GRID_ROWS; row++) {
+      for (let col = 0; col < GRID_COLS; col++) {
+        const tile = terrain.getTile(col, row);
+        const elev = terrain.getElevation(col, row);
+        const color = this.getTileColor(tile, elev);
+        bg.fillStyle(color, 1);
+        bg.fillRect(col * TILE_SIZE, row * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+      }
+    }
+
+    // Coastline borders — darker edge on water tiles adjacent to land
+    bg.lineStyle(1, 0x2a5a8a, 0.6);
+    for (let row = 0; row < GRID_ROWS; row++) {
+      for (let col = 0; col < GRID_COLS; col++) {
+        if (terrain.getTile(col, row) !== WATER) continue;
+        const hasLandNeighbor =
+          terrain.isWalkable(col - 1, row) || terrain.isWalkable(col + 1, row) ||
+          terrain.isWalkable(col, row - 1) || terrain.isWalkable(col, row + 1);
+        if (hasLandNeighbor) {
+          bg.strokeRect(col * TILE_SIZE, row * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+        }
+      }
+    }
+  }
+
+  // Returns a hex color for a tile based on type and elevation
+  getTileColor(tile, elev) {
+    if (tile === WATER) {
+      // Deeper water = darker blue (elev 0→0.35 maps to dark→lighter blue)
+      const t = elev / 0.35;
+      const r = Math.floor(30 + t * 30);
+      const g = Math.floor(60 + t * 50);
+      const b = Math.floor(120 + t * 60);
+      return (r << 16) | (g << 8) | b;
+    } else if (tile === PLAINS) {
+      // Low plains = lighter green, higher = darker green (elev 0.35→0.65)
+      const t = (elev - 0.35) / 0.3;
+      const r = Math.floor(80 + (1 - t) * 50);
+      const g = Math.floor(140 + (1 - t) * 40);
+      const b = Math.floor(60 + (1 - t) * 20);
+      return (r << 16) | (g << 8) | b;
+    } else {
+      // Hills — brown/tan, higher = darker (elev 0.65→1.0)
+      const t = (elev - 0.65) / 0.35;
+      const r = Math.floor(140 - t * 40);
+      const g = Math.floor(120 - t * 35);
+      const b = Math.floor(70 - t * 25);
+      return (r << 16) | (g << 8) | b;
+    }
   }
 
   // Creates the 5 civ objects and stores them in state
@@ -81,11 +144,69 @@ export class GameScene extends Phaser.Scene {
     state.player = state.civs[0];
   }
 
-  // Creates one city per civ at the predefined positions
+  // Places cities on their assigned continents (2-2-1 distribution)
   spawnCities() {
+    const terrain = state.terrain;
+    const placed = [];
+
     for (let i = 0; i < state.civs.length; i++) {
-      const [x, y] = CITY_POSITIONS[i];
-      new City(this, x, y, state.civs[i]);
+      const ci = CIV_CONTINENTS[i];
+      const cont = CONTINENTS[ci];
+      // Convert continent tile center/radius to world coords
+      const wcx = cont.cx * TILE_SIZE + TILE_SIZE / 2;
+      const wcy = cont.cy * TILE_SIZE + TILE_SIZE / 2;
+      const wrx = cont.rx * TILE_SIZE;
+      const wry = cont.ry * TILE_SIZE;
+
+      let bestPos = null;
+
+      for (let pass = 0; pass < 2 && !bestPos; pass++) {
+        const buffer = pass === 0 ? CITY_WATER_BUFFER : 0;
+        const minDist = pass === 0 ? CITY_MIN_DISTANCE : CITY_MIN_DISTANCE * 0.5;
+
+        for (let attempt = 0; attempt < 500; attempt++) {
+          const x = wcx + (Math.random() * 2 - 1) * wrx * 0.7;
+          const y = wcy + (Math.random() * 2 - 1) * wry * 0.7;
+          const { col, row } = terrain.worldToTile(x, y);
+
+          if (!terrain.isWalkable(col, row)) continue;
+          if (terrain.getContinentAt(col, row) !== ci) continue;
+
+          // Water buffer check
+          let tooCloseToWater = false;
+          if (buffer > 0) {
+            for (let dr = -buffer; dr <= buffer && !tooCloseToWater; dr++) {
+              for (let dc = -buffer; dc <= buffer; dc++) {
+                if (!terrain.isWalkable(col + dc, row + dr)) {
+                  tooCloseToWater = true;
+                  break;
+                }
+              }
+            }
+          }
+          if (tooCloseToWater) continue;
+
+          // Min distance from other cities on same continent
+          const tooClose = placed.some(p => {
+            const dx = p.x - x;
+            const dy = p.y - y;
+            return Math.sqrt(dx * dx + dy * dy) < minDist;
+          });
+          if (tooClose) continue;
+
+          bestPos = { x, y };
+          break;
+        }
+      }
+
+      if (!bestPos) {
+        console.warn(`Could not place city for civ ${i} on continent ${ci}, using center fallback`);
+        bestPos = { x: wcx, y: wcy };
+      }
+
+      const city = new City(this, bestPos.x, bestPos.y, state.civs[i]);
+      city.continentId = ci;
+      placed.push(bestPos);
     }
   }
 
@@ -116,10 +237,54 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
-  // Creates geysers at predefined positions across the map
+  // Places geysers per continent (5-5-3 distribution)
   spawnGeysers() {
-    for (const [x, y] of GEYSER_POSITIONS) {
-      new Geyser(this, x, y);
+    const terrain = state.terrain;
+    const placed = [];
+
+    for (let ci = 0; ci < CONTINENTS.length; ci++) {
+      const cont = CONTINENTS[ci];
+      const count = CONTINENT_GEYSERS[ci];
+      const wcx = cont.cx * TILE_SIZE + TILE_SIZE / 2;
+      const wcy = cont.cy * TILE_SIZE + TILE_SIZE / 2;
+      const wrx = cont.rx * TILE_SIZE;
+      const wry = cont.ry * TILE_SIZE;
+
+      for (let g = 0; g < count; g++) {
+        let bestPos = null;
+
+        for (let attempt = 0; attempt < 500; attempt++) {
+          const x = wcx + (Math.random() * 2 - 1) * wrx * 0.8;
+          const y = wcy + (Math.random() * 2 - 1) * wry * 0.8;
+          const { col, row } = terrain.worldToTile(x, y);
+
+          if (!terrain.isWalkable(col, row)) continue;
+          if (terrain.getContinentAt(col, row) !== ci) continue;
+
+          const tooCloseToCity = state.cities.some(c => {
+            const dx = c.x - x;
+            const dy = c.y - y;
+            return Math.sqrt(dx * dx + dy * dy) < GEYSER_MIN_CITY_DIST;
+          });
+          if (tooCloseToCity) continue;
+
+          const tooCloseToGeyser = placed.some(p => {
+            const dx = p.x - x;
+            const dy = p.y - y;
+            return Math.sqrt(dx * dx + dy * dy) < GEYSER_MIN_GEYSER_DIST;
+          });
+          if (tooCloseToGeyser) continue;
+
+          bestPos = { x, y };
+          break;
+        }
+
+        if (bestPos) {
+          const geyser = new Geyser(this, bestPos.x, bestPos.y);
+          geyser.continentId = ci;
+          placed.push(bestPos);
+        }
+      }
     }
   }
 

@@ -6,23 +6,75 @@ import {
   UNIT_CAP,
   ATTACK_RANGE,
   AI_TICK_INTERVAL,
+  MILITARY_ASSIST_UNITS,
+  MILITARY_ASSIST_HOSTILITY_SPIKE,
+  MILITARY_ASSIST_DURATION,
 } from '../constants.js';
-import { initRelationships, updateRelationships, getHostility } from './Relationships.js';
+import { initRelationships, updateRelationships, getHostility, spikeAggression } from './Relationships.js';
+import { pathDistance } from '../utils/pathfinding.js';
+import { state as gameState } from '../state.js';
 
 let aiTimer = 0;
+let targetWeights = {};  // { civId: { targetCivId: expiryGameTime } }
 
 // Resets the AI timer for a fresh game
 export function resetAI() {
   aiTimer = 0;
+  targetWeights = {};
 }
 
-// Assigns personality types to AI civs and sets up relationships
+// Assigns personality types and civ types, sets up relationships
 export function initAI() {
+  state.civs[0].civType = 'military';
+  state.civs[1].civType = 'military';
+  state.civs[2].civType = 'economic';
+  state.civs[3].civType = 'religious';
+  state.civs[4].civType = 'economic';
+
   state.civs[1].personality = 'rusher';
   state.civs[2].personality = 'balanced';
   state.civs[3].personality = 'balanced';
   state.civs[4].personality = 'economist';
   initRelationships();
+}
+
+// Applies a hired target bias to an AI civ
+export function applyHiredTarget(hiredCivId, targetCivId, durationSecs) {
+  if (!targetWeights[hiredCivId]) targetWeights[hiredCivId] = {};
+  targetWeights[hiredCivId][targetCivId] = state.gameTime + durationSecs;
+}
+
+// Executes a military assistance hire — spawns mercenary units and applies targeting
+export function executeHireAssist(hiredCiv, targetCiv, cost, scene) {
+  state.player.sporebucks -= cost;
+  hiredCiv.sporebucks += cost;
+
+  spikeAggression(hiredCiv.id, targetCiv.id, MILITARY_ASSIST_HOSTILITY_SPIKE);
+  applyHiredTarget(hiredCiv.id, targetCiv.id, MILITARY_ASSIST_DURATION);
+
+  // Spawn mercenary units that attack the target directly
+  const spawnCity = hiredCiv.cities[0];
+  if (!spawnCity) return;
+
+  // Find nearest target city to attack
+  let nearestCity = null;
+  let nearestDist = Infinity;
+  for (const city of targetCiv.cities) {
+    const dx = spawnCity.x - city.x;
+    const dy = spawnCity.y - city.y;
+    const d = Math.sqrt(dx * dx + dy * dy);
+    if (d < nearestDist) { nearestDist = d; nearestCity = city; }
+  }
+
+  for (let i = 0; i < MILITARY_ASSIST_UNITS; i++) {
+    const unit = new Unit(scene, spawnCity.x, spawnCity.y, hiredCiv);
+    unit.isMercenary = true;
+    // Refund the cost — mercenaries are paid for by the hiring civ
+    hiredCiv.sporebucks += UNIT_COST;
+    if (nearestCity) {
+      unit.attackEntity(nearestCity);
+    }
+  }
 }
 
 // Runs the AI decision loop on a 1-second tick
@@ -176,6 +228,22 @@ function handleAttack(civ) {
     }
   }
 
+  // Check for hired target bias — 70% chance to override target selection
+  const weights = targetWeights[civ.id];
+  if (weights) {
+    // Clean expired weights
+    for (const [tid, expiry] of Object.entries(weights)) {
+      if (state.gameTime > expiry) delete weights[tid];
+    }
+    const weightedIds = Object.keys(weights).map(Number);
+    if (weightedIds.length > 0 && Math.random() < 0.7) {
+      const weightedCiv = state.civs[weightedIds[0]];
+      if (weightedCiv && (weightedCiv.cities.length > 0 || weightedCiv.units.some(u => u.isAlive))) {
+        targetCiv = weightedCiv;
+      }
+    }
+  }
+
   if (!targetCiv) return false;
 
   const unit = idleUnits[0];
@@ -207,7 +275,7 @@ function handleReturnHome(civ) {
 
 // Returns all alive idle units for a civ
 function getIdleUnits(civ) {
-  return civ.units.filter((u) => u.isAlive && u.unitState === 'idle');
+  return civ.units.filter((u) => u.isAlive && u.unitState === 'idle' && !u.isMercenary);
 }
 
 // Returns true if any enemy unit is attacking this city
@@ -249,13 +317,15 @@ function findNearestEnemyAttacker(city, defenderCiv) {
   return nearest;
 }
 
-// Returns the nearest object from a list to the given unit
+// Returns the nearest object from a list to the given unit (using path distance when terrain exists)
 function findNearest(unit, list) {
   let nearest = null;
   let nearestDist = Infinity;
 
   for (const item of list) {
-    const d = distBetween(unit, item);
+    const d = gameState.terrain
+      ? pathDistance(gameState.terrain, unit.x, unit.y, item.x, item.y)
+      : distBetween(unit, item);
     if (d < nearestDist) {
       nearestDist = d;
       nearest = item;
@@ -264,30 +334,16 @@ function findNearest(unit, list) {
   return nearest;
 }
 
-// Returns the nearest city or geyser owned by a specific target civ
+// Returns the nearest city or geyser owned by a specific target civ (using path distance)
 function findNearestCivAsset(unit, targetCiv) {
-  let nearest = null;
-  let nearestDist = Infinity;
-
+  const assets = [];
   for (const city of state.cities) {
-    if (city.owner !== targetCiv) continue;
-    const d = distBetween(unit, city);
-    if (d < nearestDist) {
-      nearestDist = d;
-      nearest = city;
-    }
+    if (city.owner === targetCiv) assets.push(city);
   }
-
   for (const geyser of state.geysers) {
-    if (geyser.owner !== targetCiv) continue;
-    const d = distBetween(unit, geyser);
-    if (d < nearestDist) {
-      nearestDist = d;
-      nearest = geyser;
-    }
+    if (geyser.owner === targetCiv) assets.push(geyser);
   }
-
-  return nearest;
+  return findNearest(unit, assets);
 }
 
 // Returns the distance between two objects with x/y properties

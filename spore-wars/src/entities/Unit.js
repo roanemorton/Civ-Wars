@@ -1,6 +1,7 @@
 // Represents a movable unit that can attack, claim, and defend
 import { state } from '../state.js';
 import {
+  TILE_SIZE,
   UNIT_HP,
   UNIT_SPEED,
   UNIT_COST,
@@ -14,6 +15,7 @@ import {
   GEYSER_CLAIM_TIME,
 } from '../constants.js';
 import { recordAggression } from '../ai/Relationships.js';
+import { findPath } from '../utils/pathfinding.js';
 
 let nextUnitId = 0;
 
@@ -33,6 +35,9 @@ export class Unit {
     this.claimTarget = null;
     this.attackTimer = 0;
     this.isAlive = true;
+    this.path = [];
+    this.lastPathTargetX = null;
+    this.lastPathTargetY = null;
 
     this.container = this.createVisuals();
 
@@ -80,12 +85,18 @@ export class Unit {
   // Cancels any current action and cleans up associated state
   cancelCurrentAction() {
     if (this.claimTarget) {
+      if (this.claimTarget.claimedBy === this) {
+        this.claimTarget.claimedBy = null;
+      }
       this.claimTarget.resetCaptureBar();
       this.claimTarget.resetHP();
       this.claimTarget = null;
     }
     this.attackTarget = null;
     this.attackTimer = 0;
+    this.path = [];
+    this.lastPathTargetX = null;
+    this.lastPathTargetY = null;
   }
 
   // Sets the unit's movement target, cancelling any current action
@@ -93,20 +104,39 @@ export class Unit {
     this.cancelCurrentAction();
     this.targetX = x;
     this.targetY = y;
+    this.computePath(x, y);
     this.unitState = 'moving';
+  }
+
+  // Computes an A* path to the given world coordinates
+  computePath(destX, destY) {
+    if (!state.terrain) {
+      this.path = [{ x: destX, y: destY }];
+      return;
+    }
+    const result = findPath(state.terrain, this.x, this.y, destX, destY);
+    this.path = result || [];
+    this.lastPathTargetX = destX;
+    this.lastPathTargetY = destY;
   }
 
   // Orders this unit to attack a target entity (Unit or City)
   attackEntity(target) {
     this.cancelCurrentAction();
     this.attackTarget = target;
+    this.computePath(target.x, target.y);
     this.unitState = 'moving';
   }
 
   // Orders this unit to claim a geyser
   claimGeyser(geyser) {
+    // Reject if an unclaimed geyser is already being claimed by another unit
+    if (!geyser.owner && geyser.claimedBy && geyser.claimedBy !== this && geyser.claimedBy.isAlive) {
+      return;
+    }
     this.cancelCurrentAction();
     this.claimTarget = geyser;
+    this.computePath(geyser.x, geyser.y);
     this.unitState = 'moving';
   }
 
@@ -130,65 +160,74 @@ export class Unit {
     }
   }
 
-  // Handles movement toward a target or destination
+  // Handles movement along a pathfinding waypoint list
   updateMoving(delta) {
-    let destX, destY;
-
+    // Check attack/claim target validity
     if (this.attackTarget) {
-      // Check if attack target is still alive or now friendly
       if (this.attackTarget.isAlive === false || this.attackTarget.owner === this.owner) {
         this.attackTarget = null;
         this.unitState = 'idle';
         return;
       }
-      destX = this.attackTarget.x;
-      destY = this.attackTarget.y;
-
       // Check if within attack range
-      if (this.distanceTo(destX, destY) <= ATTACK_RANGE) {
+      if (this.distanceTo(this.attackTarget.x, this.attackTarget.y) <= ATTACK_RANGE) {
         this.unitState = 'attacking';
         this.attackTimer = 0;
         return;
       }
+      // Recompute path if target moved significantly (>1 tile)
+      const tdx = this.attackTarget.x - (this.lastPathTargetX || 0);
+      const tdy = this.attackTarget.y - (this.lastPathTargetY || 0);
+      if (tdx * tdx + tdy * tdy > TILE_SIZE * TILE_SIZE) {
+        this.computePath(this.attackTarget.x, this.attackTarget.y);
+      }
     } else if (this.claimTarget) {
-      destX = this.claimTarget.x;
-      destY = this.claimTarget.y;
-
-      // Check if within range of geyser
-      if (this.distanceTo(destX, destY) <= ATTACK_RANGE) {
+      if (this.distanceTo(this.claimTarget.x, this.claimTarget.y) <= ATTACK_RANGE) {
+        // Check if another unit already has claim priority on unclaimed geyser
+        if (!this.claimTarget.owner && this.claimTarget.claimedBy && this.claimTarget.claimedBy !== this && this.claimTarget.claimedBy.isAlive) {
+          this.claimTarget = null;
+          this.unitState = 'idle';
+          return;
+        }
+        this.claimTarget.claimedBy = this;
         this.unitState = 'claiming';
         this.attackTimer = 0;
         return;
       }
-    } else {
-      destX = this.targetX;
-      destY = this.targetY;
     }
 
-    if (destX === null || destY === null) {
-      this.unitState = 'idle';
-      return;
-    }
-
-    // Move toward destination
-    const dx = destX - this.x;
-    const dy = destY - this.y;
-    const dist = Math.sqrt(dx * dx + dy * dy);
-    const moveAmount = UNIT_SPEED * (delta / 1000);
-
-    if (dist <= moveAmount) {
-      this.x = destX;
-      this.y = destY;
-      // Only go idle if plain movement (no attack/claim target)
+    // No waypoints left — arrive or go idle
+    if (this.path.length === 0) {
       if (!this.attackTarget && !this.claimTarget) {
         this.targetX = null;
         this.targetY = null;
         this.unitState = 'idle';
       }
-    } else {
-      const ratio = moveAmount / dist;
-      this.x += dx * ratio;
-      this.y += dy * ratio;
+      return;
+    }
+
+    // Follow waypoints
+    let moveAmount = UNIT_SPEED * (delta / 1000);
+
+    while (moveAmount > 0 && this.path.length > 0) {
+      const wp = this.path[0];
+      const dx = wp.x - this.x;
+      const dy = wp.y - this.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+
+      if (dist <= moveAmount) {
+        // Reach this waypoint, consume distance, move to next
+        this.x = wp.x;
+        this.y = wp.y;
+        moveAmount -= dist;
+        this.path.shift();
+      } else {
+        // Move toward waypoint
+        const ratio = moveAmount / dist;
+        this.x += dx * ratio;
+        this.y += dy * ratio;
+        moveAmount = 0;
+      }
     }
 
     this.container.setPosition(this.x, this.y);

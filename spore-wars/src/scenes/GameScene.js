@@ -14,8 +14,8 @@ import {
   GRID_COLS,
   GRID_ROWS,
   CIV_COLORS,
-  CONTINENTS,
   CONTINENT_GEYSERS,
+  OCEAN_GEYSERS,
   CIV_CONTINENTS,
   CITY_MIN_DISTANCE,
   CITY_WATER_BUFFER,
@@ -104,21 +104,18 @@ export class GameScene extends Phaser.Scene {
   // Returns a hex color for a tile based on type and elevation
   getTileColor(tile, elev) {
     if (tile === WATER) {
-      // Deeper water = darker blue (elev 0→0.35 maps to dark→lighter blue)
-      const t = elev / 0.35;
+      const t = elev / 0.32;
       const r = Math.floor(30 + t * 30);
       const g = Math.floor(60 + t * 50);
       const b = Math.floor(120 + t * 60);
       return (r << 16) | (g << 8) | b;
     } else if (tile === PLAINS) {
-      // Low plains = lighter green, higher = darker green (elev 0.35→0.65)
-      const t = (elev - 0.35) / 0.3;
+      const t = (elev - 0.32) / 0.33;
       const r = Math.floor(80 + (1 - t) * 50);
       const g = Math.floor(140 + (1 - t) * 40);
       const b = Math.floor(60 + (1 - t) * 20);
       return (r << 16) | (g << 8) | b;
     } else {
-      // Hills — brown/tan, higher = darker (elev 0.65→1.0)
       const t = (elev - 0.65) / 0.35;
       const r = Math.floor(140 - t * 40);
       const g = Math.floor(120 - t * 35);
@@ -144,6 +141,11 @@ export class GameScene extends Phaser.Scene {
     state.player = state.civs[0];
   }
 
+  // Returns world-coord bounding box for a continent (cached in terrain)
+  getContinentBounds(ci) {
+    return state.terrain.continentBounds[ci];
+  }
+
   // Places cities on their assigned continents (2-2-1 distribution)
   spawnCities() {
     const terrain = state.terrain;
@@ -151,12 +153,11 @@ export class GameScene extends Phaser.Scene {
 
     for (let i = 0; i < state.civs.length; i++) {
       const ci = CIV_CONTINENTS[i];
-      const cont = CONTINENTS[ci];
-      // Convert continent tile center/radius to world coords
-      const wcx = cont.cx * TILE_SIZE + TILE_SIZE / 2;
-      const wcy = cont.cy * TILE_SIZE + TILE_SIZE / 2;
-      const wrx = cont.rx * TILE_SIZE;
-      const wry = cont.ry * TILE_SIZE;
+      const bounds = this.getContinentBounds(ci);
+      const wcx = bounds.cx;
+      const wcy = bounds.cy;
+      const wrx = bounds.hw;
+      const wry = bounds.hh;
 
       let bestPos = null;
 
@@ -242,13 +243,13 @@ export class GameScene extends Phaser.Scene {
     const terrain = state.terrain;
     const placed = [];
 
-    for (let ci = 0; ci < CONTINENTS.length; ci++) {
-      const cont = CONTINENTS[ci];
+    for (let ci = 0; ci < CONTINENT_GEYSERS.length; ci++) {
       const count = CONTINENT_GEYSERS[ci];
-      const wcx = cont.cx * TILE_SIZE + TILE_SIZE / 2;
-      const wcy = cont.cy * TILE_SIZE + TILE_SIZE / 2;
-      const wrx = cont.rx * TILE_SIZE;
-      const wry = cont.ry * TILE_SIZE;
+      const bounds = this.getContinentBounds(ci);
+      const wcx = bounds.cx;
+      const wcy = bounds.cy;
+      const wrx = bounds.hw;
+      const wry = bounds.hh;
 
       for (let g = 0; g < count; g++) {
         let bestPos = null;
@@ -286,13 +287,64 @@ export class GameScene extends Phaser.Scene {
         }
       }
     }
+
+    // Ocean geysers — placed on water tiles, unclaimed until boats exist
+    for (let i = 0; i < OCEAN_GEYSERS; i++) {
+      let bestPos = null;
+
+      for (let attempt = 0; attempt < 500; attempt++) {
+        const x = TILE_SIZE * 5 + Math.random() * (MAP_WIDTH - TILE_SIZE * 10);
+        const y = TILE_SIZE * 5 + Math.random() * (MAP_HEIGHT - TILE_SIZE * 10);
+        const { col, row } = terrain.worldToTile(x, y);
+
+        // Must be on water
+        if (terrain.isWalkable(col, row)) continue;
+
+        // Min distance from land (at least 3 tiles from any coast)
+        let tooCloseToLand = false;
+        for (let dr = -3; dr <= 3 && !tooCloseToLand; dr++) {
+          for (let dc = -3; dc <= 3; dc++) {
+            if (terrain.isWalkable(col + dc, row + dr)) {
+              tooCloseToLand = true;
+              break;
+            }
+          }
+        }
+        if (tooCloseToLand) continue;
+
+        // Min distance from other geysers
+        const tooClose = placed.some(p => {
+          const dx = p.x - x;
+          const dy = p.y - y;
+          return Math.sqrt(dx * dx + dy * dy) < GEYSER_MIN_GEYSER_DIST * 2;
+        });
+        if (tooClose) continue;
+
+        bestPos = { x, y };
+        break;
+      }
+
+      if (bestPos) {
+        const geyser = new Geyser(this, bestPos.x, bestPos.y);
+        geyser.continentId = -1; // ocean
+        placed.push(bestPos);
+      }
+    }
   }
 
-  // Configures the camera bounds and centers on the player city
+  // Configures the camera bounds, zoom, and centers on the player city
   setupCamera() {
     this.cameras.main.setBounds(0, 0, MAP_WIDTH, MAP_HEIGHT);
     const playerCity = state.player.cities[0];
     this.cameras.main.centerOn(playerCity.x, playerCity.y);
+
+    // Mouse wheel zoom
+    this.input.on('wheel', (pointer, gameObjects, deltaX, deltaY) => {
+      const cam = this.cameras.main;
+      const oldZoom = cam.zoom;
+      const newZoom = Phaser.Math.Clamp(oldZoom - deltaY * 0.001, 0.4, 2.0);
+      cam.setZoom(newZoom);
+    });
   }
 
   // Sets up click-and-drag panning with a threshold to distinguish clicks from drags
@@ -520,7 +572,9 @@ export class GameScene extends Phaser.Scene {
     if (!canSpawn) return;
 
     const city = this.spawnPopupCity;
-    new Unit(this, city.x, city.y, state.player);
+    const angle = Math.random() * Math.PI * 2;
+    const dist = CITY_SPRITE_RADIUS + UNIT_SPRITE_RADIUS + 5;
+    new Unit(this, city.x + Math.cos(angle) * dist, city.y + Math.sin(angle) * dist, state.player);
     this.destroySpawnPopup();
   }
 

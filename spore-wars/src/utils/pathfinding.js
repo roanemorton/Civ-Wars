@@ -15,9 +15,32 @@ function heuristic(c1, r1, c2, r2) {
   return Math.max(dx, dy) + (SQRT2 - 1) * Math.min(dx, dy);
 }
 
+// Builds a set of obstacle tile keys from cities and geysers
+export function buildObstacles(terrain, cities, geysers, tileSize, spriteRadii) {
+  const obstacles = new Set();
+  const entities = [
+    ...cities.map(c => ({ x: c.x, y: c.y, r: spriteRadii.city })),
+    ...geysers.map(g => ({ x: g.x, y: g.y, r: spriteRadii.geyser })),
+  ];
+  for (const e of entities) {
+    const center = terrain.worldToTile(e.x, e.y);
+    const tileRadius = Math.ceil(e.r / tileSize);
+    for (let dr = -tileRadius; dr <= tileRadius; dr++) {
+      for (let dc = -tileRadius; dc <= tileRadius; dc++) {
+        const c = center.col + dc;
+        const r = center.row + dr;
+        if (c >= 0 && c < terrain.cols && r >= 0 && r < terrain.rows) {
+          obstacles.add(r * terrain.cols + c);
+        }
+      }
+    }
+  }
+  return obstacles;
+}
+
 // Finds an A* path from world coords to world coords
-// Returns array of {x, y} waypoints in world coords, or null if unreachable
-export function findPath(terrain, startX, startY, endX, endY) {
+// obstacles is an optional Set of tile keys to treat as impassable
+export function findPath(terrain, startX, startY, endX, endY, obstacles) {
   let start = terrain.worldToTile(startX, startY);
   let end = terrain.worldToTile(endX, endY);
 
@@ -70,12 +93,15 @@ export function findPath(terrain, startX, startY, endX, endY) {
 
       if (!terrain.isWalkable(nc, nr)) continue;
 
+      // Skip obstacle tiles (cities/geysers) unless it's the destination
+      const nKey = key(nc, nr);
+      if (obstacles && obstacles.has(nKey) && !(nc === end.col && nr === end.row)) continue;
+
       // No corner-cutting: for diagonals, both adjacent cardinal tiles must be walkable
       if (dc !== 0 && dr !== 0) {
         if (!terrain.isWalkable(cc + dc, cr) || !terrain.isWalkable(cc, cr + dr)) continue;
       }
 
-      const nKey = key(nc, nr);
       const tentativeG = currentG + cost;
 
       if (!gScore.has(nKey) || tentativeG < gScore.get(nKey)) {
@@ -91,8 +117,8 @@ export function findPath(terrain, startX, startY, endX, endY) {
 }
 
 // Returns approximate path distance (in tiles) between two world points, or Infinity if unreachable
-export function pathDistance(terrain, startX, startY, endX, endY) {
-  const path = findPath(terrain, startX, startY, endX, endY);
+export function pathDistance(terrain, startX, startY, endX, endY, obstacles) {
+  const path = findPath(terrain, startX, startY, endX, endY, obstacles);
   if (!path) return Infinity;
   let dist = 0;
   let px = startX, py = startY;

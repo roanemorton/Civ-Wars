@@ -13,9 +13,11 @@ import {
   ATTACK_RANGE,
   DEPTH_UNIT,
   GEYSER_CLAIM_TIME,
+  CITY_SPRITE_RADIUS,
+  GEYSER_SPRITE_RADIUS,
 } from '../constants.js';
 import { recordAggression } from '../ai/Relationships.js';
-import { findPath } from '../utils/pathfinding.js';
+import { findPath, buildObstacles } from '../utils/pathfinding.js';
 
 let nextUnitId = 0;
 
@@ -108,13 +110,36 @@ export class Unit {
     this.unitState = 'moving';
   }
 
-  // Computes an A* path to the given world coordinates
+  // Computes an A* path to the given world coordinates, avoiding cities and geysers
   computePath(destX, destY) {
     if (!state.terrain) {
       this.path = [{ x: destX, y: destY }];
       return;
     }
-    const result = findPath(state.terrain, this.x, this.y, destX, destY);
+    const obstacles = buildObstacles(state.terrain, state.cities, state.geysers, TILE_SIZE, {
+      city: CITY_SPRITE_RADIUS,
+      geyser: GEYSER_SPRITE_RADIUS,
+    });
+    const result = findPath(state.terrain, this.x, this.y, destX, destY, obstacles);
+    this.path = result || [];
+    this.lastPathTargetX = destX;
+    this.lastPathTargetY = destY;
+  }
+
+  // Computes a path toward a target entity, excluding that entity from obstacles
+  computePathToTarget(destX, destY, targetEntity) {
+    if (!state.terrain) {
+      this.path = [{ x: destX, y: destY }];
+      return;
+    }
+    // Exclude the target entity from obstacle set so we can path to it
+    const cities = state.cities.filter(c => c !== targetEntity);
+    const geysers = state.geysers.filter(g => g !== targetEntity);
+    const obstacles = buildObstacles(state.terrain, cities, geysers, TILE_SIZE, {
+      city: CITY_SPRITE_RADIUS,
+      geyser: GEYSER_SPRITE_RADIUS,
+    });
+    const result = findPath(state.terrain, this.x, this.y, destX, destY, obstacles);
     this.path = result || [];
     this.lastPathTargetX = destX;
     this.lastPathTargetY = destY;
@@ -124,7 +149,7 @@ export class Unit {
   attackEntity(target) {
     this.cancelCurrentAction();
     this.attackTarget = target;
-    this.computePath(target.x, target.y);
+    this.computePathToTarget(target.x, target.y, target);
     this.unitState = 'moving';
   }
 
@@ -136,7 +161,7 @@ export class Unit {
     }
     this.cancelCurrentAction();
     this.claimTarget = geyser;
-    this.computePath(geyser.x, geyser.y);
+    this.computePathToTarget(geyser.x, geyser.y, geyser);
     this.unitState = 'moving';
   }
 
@@ -147,9 +172,31 @@ export class Unit {
     return Math.sqrt(dx * dx + dy * dy);
   }
 
+  // Pushes this unit away from overlapping units
+  separateFromUnits() {
+    const minDist = UNIT_SPRITE_RADIUS * 2.2;
+    for (const civ of state.civs) {
+      for (const other of civ.units) {
+        if (other === this || !other.isAlive) continue;
+        const dx = this.x - other.x;
+        const dy = this.y - other.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist < minDist && dist > 0.1) {
+          const push = (minDist - dist) * 0.3;
+          const nx = dx / dist;
+          const ny = dy / dist;
+          this.x += nx * push;
+          this.y += ny * push;
+        }
+      }
+    }
+    this.container.setPosition(this.x, this.y);
+  }
+
   // Advances the unit's state each frame — handles movement, combat, and claiming
   update(delta) {
     if (!this.isAlive) return;
+    this.separateFromUnits();
 
     if (this.unitState === 'moving') {
       this.updateMoving(delta);
@@ -179,7 +226,7 @@ export class Unit {
       const tdx = this.attackTarget.x - (this.lastPathTargetX || 0);
       const tdy = this.attackTarget.y - (this.lastPathTargetY || 0);
       if (tdx * tdx + tdy * tdy > TILE_SIZE * TILE_SIZE) {
-        this.computePath(this.attackTarget.x, this.attackTarget.y);
+        this.computePathToTarget(this.attackTarget.x, this.attackTarget.y, this.attackTarget);
       }
     } else if (this.claimTarget) {
       if (this.distanceTo(this.claimTarget.x, this.claimTarget.y) <= ATTACK_RANGE) {
@@ -277,6 +324,14 @@ export class Unit {
 
   // Handles claiming a geyser — fast timer for unclaimed, damage-based for claimed
   updateClaiming(delta) {
+    // Stop if geyser is now owned by our civ (already captured)
+    if (this.claimTarget.owner === this.owner) {
+      if (this.claimTarget.claimedBy === this) this.claimTarget.claimedBy = null;
+      this.claimTarget = null;
+      this.unitState = 'idle';
+      return;
+    }
+
     if (!this.claimTarget.owner) {
       // Unclaimed: simple timer with progress bar
       this.attackTimer += delta;

@@ -6,6 +6,8 @@ import {
   UNIT_CAP,
   ATTACK_RANGE,
   AI_TICK_INTERVAL,
+  CITY_SPRITE_RADIUS,
+  UNIT_SPRITE_RADIUS,
   MILITARY_ASSIST_UNITS,
   MILITARY_ASSIST_HOSTILITY_SPIKE,
   MILITARY_ASSIST_DURATION,
@@ -67,7 +69,9 @@ export function executeHireAssist(hiredCiv, targetCiv, cost, scene) {
   }
 
   for (let i = 0; i < MILITARY_ASSIST_UNITS; i++) {
-    const unit = new Unit(scene, spawnCity.x, spawnCity.y, hiredCiv);
+    const angle = Math.random() * Math.PI * 2;
+    const sDist = CITY_SPRITE_RADIUS + UNIT_SPRITE_RADIUS + 5;
+    const unit = new Unit(scene, spawnCity.x + Math.cos(angle) * sDist, spawnCity.y + Math.sin(angle) * sDist, hiredCiv);
     unit.isMercenary = true;
     // Refund the cost — mercenaries are paid for by the hiring civ
     hiredCiv.sporebucks += UNIT_COST;
@@ -118,7 +122,9 @@ function trySpawnUnit(civ, scene) {
   if (civ.cities.length === 0) return;
   if (civ.sporebucks >= UNIT_COST && civ.units.length < UNIT_CAP) {
     const city = civ.cities[0];
-    new Unit(scene, city.x, city.y, civ);
+    const angle = Math.random() * Math.PI * 2;
+    const dist = CITY_SPRITE_RADIUS + UNIT_SPRITE_RADIUS + 5;
+    new Unit(scene, city.x + Math.cos(angle) * dist, city.y + Math.sin(angle) * dist, civ);
   }
 }
 

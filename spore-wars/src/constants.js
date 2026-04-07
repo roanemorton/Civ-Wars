@@ -1,15 +1,15 @@
 // All tunable game values — no magic numbers elsewhere
 
 // Map dimensions
-export const MAP_WIDTH = 3200;
-export const MAP_HEIGHT = 2400;
+export const MAP_WIDTH = 6400;
+export const MAP_HEIGHT = 4800;
 
 // Terrain grid
 export const MAP_SEED = 314;
-export const TILE_SIZE = 64;
+export const TILE_SIZE = 32;
 export const GRID_COLS = Math.ceil(MAP_WIDTH / TILE_SIZE);
 export const GRID_ROWS = Math.ceil(MAP_HEIGHT / TILE_SIZE);
-export const WATER_THRESHOLD = 0.35;
+export const WATER_THRESHOLD = 0.32;
 export const HILLS_THRESHOLD = 0.65;
 
 // City
@@ -36,20 +36,39 @@ export const GEYSER_BAR_WIDTH = 40;
 export const GEYSER_BAR_HEIGHT = 4;
 export const GEYSER_BAR_OFFSET_Y = -30;
 
-// Continent layout (tile coords — center and elliptical radius)
+// Continent layout — each continent is an array of overlapping ellipses
+// Coordinates are in tile space (200x150 grid at TILE_SIZE=32)
+// Larger shapes, more land coverage (~55%), water forms channels between
 export const CONTINENTS = [
-  { cx: 12, cy: 10, rx: 10, ry: 8 },   // A: left-medium
-  { cx: 38, cy: 10, rx: 10, ry: 8 },   // B: right-medium
-  { cx: 25, cy: 30, rx: 10, ry: 5 },   // C: bottom-small
+  // A: Left continent (medium)
+  [
+    { cx: 35, cy: 28, rx: 35, ry: 30 },
+    { cx: 28, cy: 72, rx: 30, ry: 34 },
+    { cx: 32, cy: 50, rx: 22, ry: 24 },
+    { cx: 55, cy: 42, rx: 18, ry: 16 },
+  ],
+  // B: Right continent (medium)
+  [
+    { cx: 162, cy: 22, rx: 36, ry: 30 },
+    { cx: 158, cy: 65, rx: 32, ry: 30 },
+    { cx: 160, cy: 44, rx: 22, ry: 22 },
+    { cx: 142, cy: 48, rx: 18, ry: 16 },
+  ],
+  // C: Center-bottom continent (small)
+  [
+    { cx: 100, cy: 92, rx: 36, ry: 24 },
+    { cx: 90, cy: 112, rx: 26, ry: 20 },
+  ],
 ];
-export const CONTINENT_GEYSERS = [5, 5, 3];  // geysers per continent
+export const CONTINENT_GEYSERS = [5, 5, 3];  // land geysers per continent
+export const OCEAN_GEYSERS = 4;              // geysers placed in open water
 export const CIV_CONTINENTS = [0, 0, 1, 1, 2]; // civ-to-continent assignment
 
 // Entity placement
-export const CITY_MIN_DISTANCE = 400;
+export const CITY_MIN_DISTANCE = 800;
 export const CITY_WATER_BUFFER = 2;    // min tiles from coast
-export const GEYSER_MIN_CITY_DIST = 200;
-export const GEYSER_MIN_GEYSER_DIST = 150;
+export const GEYSER_MIN_CITY_DIST = 400;
+export const GEYSER_MIN_GEYSER_DIST = 300;
 
 // Territory
 export const TERRITORY_CITY_RADIUS = 200;

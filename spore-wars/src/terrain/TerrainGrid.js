@@ -1,4 +1,4 @@
-// Terrain grid — generates multi-continent map with water, plains, hills
+// Terrain grid — generates multi-continent map using ellipse influence + noise
 import {
   TILE_SIZE,
   GRID_COLS,
@@ -90,9 +90,10 @@ export class TerrainGrid {
   constructor() {
     this.tiles = null;
     this.elevation = null;
-    this.continentMap = null;  // Int8Array: continent id per tile (-1 = water/none)
+    this.continentMap = null;
     this.cols = GRID_COLS;
     this.rows = GRID_ROWS;
+    this.continentBounds = null;
   }
 
   generateTerrain(seed) {
@@ -103,41 +104,46 @@ export class TerrainGrid {
     this.elevation = new Float32Array(this.cols * this.rows);
     this.continentMap = new Int8Array(this.cols * this.rows).fill(-1);
 
-    const freq1 = 0.08;
-    const freq2 = 0.18;
-    const weight1 = 0.65;
-    const weight2 = 0.35;
-
     for (let row = 0; row < this.rows; row++) {
       for (let col = 0; col < this.cols; col++) {
-        // Two octaves of noise
-        const n1 = simplex2D(perm, col * freq1, row * freq1);
-        const n2 = simplex2D(perm, col * freq2, row * freq2);
-        let noise = (n1 * weight1 + n2 * weight2 + 1) / 2; // normalize to 0-1
+        // 4 octaves of noise — strong influence for blobby, organic coastlines
+        const n1 = simplex2D(perm, col * 0.018, row * 0.018);
+        const n2 = simplex2D(perm, col * 0.045, row * 0.045);
+        const n3 = simplex2D(perm, col * 0.10, row * 0.10);
+        const n4 = simplex2D(perm, col * 0.22, row * 0.22);
+        const noise = (n1 * 0.40 + n2 * 0.30 + n3 * 0.18 + n4 * 0.12 + 1) / 2;
 
-        // Find the best continent influence for this tile
+        // Find best continent influence for this tile
         let bestInfluence = 0;
         let bestContinent = -1;
 
         for (let ci = 0; ci < CONTINENTS.length; ci++) {
-          const c = CONTINENTS[ci];
-          // Elliptical distance (0 at center, 1 at edge)
-          const dx = (col - c.cx) / c.rx;
-          const dy = (row - c.cy) / c.ry;
-          const ellipDist = Math.sqrt(dx * dx + dy * dy);
+          const subShapes = CONTINENTS[ci];
+          let contInfluence = 0;
 
-          if (ellipDist < 1.3) { // Only consider tiles within ~130% of continent radius
-            // Smooth falloff: 1 at center, 0 at edge
-            const influence = 1 - Math.pow(Math.min(ellipDist, 1), 2.0);
-            if (influence > bestInfluence) {
-              bestInfluence = influence;
-              bestContinent = ci;
+          for (const c of subShapes) {
+            const dx = (col - c.cx) / c.rx;
+            const dy = (row - c.cy) / c.ry;
+            const ellipDist = Math.sqrt(dx * dx + dy * dy);
+
+            if (ellipDist < 1.5) {
+              // Softer falloff — more land extends outward
+              const influence = 1 - Math.pow(Math.min(ellipDist, 1), 1.5);
+              if (influence > contInfluence) {
+                contInfluence = influence;
+              }
             }
+          }
+
+          if (contInfluence > bestInfluence) {
+            bestInfluence = contInfluence;
+            bestContinent = ci;
           }
         }
 
-        // Combine: continent influence shapes the land, noise adds coastline variation
-        const value = bestInfluence * (0.5 + noise * 0.5);
+        // Noise has heavy influence — creates blobby, irregular coastlines
+        // influence controls the general area, noise shapes the actual edges
+        const value = bestInfluence * (0.3 + noise * 0.7);
 
         this.elevation[row * this.cols + col] = value;
 
@@ -155,10 +161,9 @@ export class TerrainGrid {
 
     // Per-continent flood fill — keep largest landmass per continent
     this.enforcePerContinent();
+    this.computeContinentBounds();
   }
 
-  // For each continent, flood-fill to find its largest connected land region,
-  // convert disconnected tiles to water
   enforcePerContinent() {
     for (let ci = 0; ci < CONTINENTS.length; ci++) {
       const visited = new Uint8Array(this.cols * this.rows);
@@ -172,7 +177,6 @@ export class TerrainGrid {
           if (this.tiles[idx] === WATER) continue;
           if (this.continentMap[idx] !== ci) continue;
 
-          // BFS flood fill within this continent
           const region = [];
           const queue = [[col, row]];
           visited[idx] = 1;
@@ -201,7 +205,6 @@ export class TerrainGrid {
         }
       }
 
-      // Convert all non-largest tiles for this continent to water
       if (!bestRegion) continue;
       const keepSet = new Set(bestRegion);
       for (let i = 0; i < this.tiles.length; i++) {
@@ -211,6 +214,30 @@ export class TerrainGrid {
           this.elevation[i] = Math.min(this.elevation[i], WATER_THRESHOLD - 0.05);
         }
       }
+    }
+  }
+
+  computeContinentBounds() {
+    this.continentBounds = {};
+    for (let ci = 0; ci < CONTINENTS.length; ci++) {
+      let minC = Infinity, maxC = -Infinity, minR = Infinity, maxR = -Infinity;
+      for (let row = 0; row < this.rows; row++) {
+        for (let col = 0; col < this.cols; col++) {
+          if (this.continentMap[row * this.cols + col] === ci) {
+            if (col < minC) minC = col;
+            if (col > maxC) maxC = col;
+            if (row < minR) minR = row;
+            if (row > maxR) maxR = row;
+          }
+        }
+      }
+      if (minC === Infinity) continue;
+      this.continentBounds[ci] = {
+        cx: ((minC + maxC) / 2) * TILE_SIZE + TILE_SIZE / 2,
+        cy: ((minR + maxR) / 2) * TILE_SIZE + TILE_SIZE / 2,
+        hw: ((maxC - minC) / 2) * TILE_SIZE,
+        hh: ((maxR - minR) / 2) * TILE_SIZE,
+      };
     }
   }
 
@@ -229,13 +256,11 @@ export class TerrainGrid {
     return this.tiles[row * this.cols + col] !== WATER;
   }
 
-  // Returns continent id (0, 1, 2) or -1 for water/none
   getContinentAt(col, row) {
     if (col < 0 || col >= this.cols || row < 0 || row >= this.rows) return -1;
     return this.continentMap[row * this.cols + col];
   }
 
-  // Returns continent id for world coordinates
   getContinentForWorld(x, y) {
     const { col, row } = this.worldToTile(x, y);
     return this.getContinentAt(col, row);
